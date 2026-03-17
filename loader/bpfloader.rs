@@ -148,6 +148,7 @@ fn libbpf_print(level: PrintLevel, mut msg: String) {
     }
 }
 
+#[allow(dead_code)]
 struct MapDesc {
     name: &'static str,
     perms: mode_t,
@@ -168,6 +169,7 @@ impl MapDesc {
     }
 }
 
+#[allow(dead_code)]
 struct ProgDesc {
     name: &'static str,
     owner: u32,
@@ -509,15 +511,21 @@ fn set_skip_loading(
 ) -> Result<(), anyhow::Error> {
     let kvers = kernel_version()?;
 
+    // Skip everything on kernels below 4.9 where eBPF is not usable
+    let skip_all = kvers < kver(4, 9, 0);
+    if skip_all {
+        info!("Kernel < 4.9, skipping all BPF programs and maps");
+    }
+
     for mut map in open_file.maps_mut() {
         let name =
             map.name().to_str().ok_or_else(|| anyhow!("Failed to parse map name into UTF-8"))?;
         for map_desc in file_desc.maps {
             if map_desc.name == name {
-                if kvers < map_desc.min_kver || kvers >= map_desc.max_kver {
+                if skip_all || kvers >= map_desc.max_kver {
                     info!(
-                        "skipping map {} min_kver:{:x} max_kver:{:x} kvers:{:x}",
-                        name, map_desc.min_kver, map_desc.max_kver, kvers
+                        "skipping map {} max_kver:{:x} kvers:{:x}",
+                        name, map_desc.max_kver, kvers
                     );
                     map.set_autocreate(false)?;
                 }
@@ -531,10 +539,10 @@ fn set_skip_loading(
             prog.name().to_str().ok_or_else(|| anyhow!("Failed to parse prog name into UTF-8"))?;
         for prog_desc in file_desc.progs {
             if prog_desc.name == name {
-                if kvers < prog_desc.min_kver || kvers >= prog_desc.max_kver {
+                if skip_all || kvers >= prog_desc.max_kver {
                     info!(
-                        "skipping program {} min_kver:{:x} max_kver:{:x} kvers:{:x}",
-                        name, prog_desc.min_kver, prog_desc.max_kver, kvers
+                        "skipping program {} max_kver:{:x} kvers:{:x}",
+                        name, prog_desc.max_kver, kvers
                     );
                     prog.set_autoload(false);
                 }
@@ -758,7 +766,7 @@ fn main() {
     info!("Loading legacy BPF progs");
 
     if let Err(e) = create_dir(Path::new("/sys/fs/bpf/vendor")) {
-        panic!("Error during mkdir /sys/fs/bpf/vendor: {e}");
+        error!("Failed to mkdir /sys/fs/bpf/vendor: {e} -- continuing anyway");
     };
 
     // SAFETY: Linking in the existing legacy vendor bpfloader functionality.
